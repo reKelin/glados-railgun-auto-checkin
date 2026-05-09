@@ -1,0 +1,29 @@
+name: 仓库保活
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 15 * *'
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 执行保活提交
+        run: |
+          echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" > .keepalive
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          if git diff --cached --quiet; then
+            echo "仓库活跃中，无需保活提交。"
+          else
+            git commit -m "chore: 保活提交 [skip ci]"
+            git push
+            echo "保活提交已推送。"
+          fi
