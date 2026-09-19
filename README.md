@@ -33,12 +33,16 @@
 
 进入仓库 **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
 
-| Secret 名称 | 是否必填 | 说明 |
-|------------|---------|------|
-| `GLADOS_COOKIES` | **必填** | GLaDOS/Railgun 的 Cookie，多账号用 `&` 分隔 |
-| `PUSHDEER_SENDKEY` | 可选 | [PushDeer](https://www.pushdeer.com) 推送密钥，用于手机接收签到结果 |
-| `GLADOS_EXCHANGE_PLAN` | 可选 | 积分兑换计划，可选 `plan100` / `plan200` / `plan500`，默认 `plan500` |
-| `GLADOS_VERBOSE` | 可选 | 详细日志输出，设为 `true` 开启，默认 `false` |
+每个 Secret 都有 **Name** 和 **Secret** 两个输入框。名称必须填写下表中的固定名称，Cookie 应填写在 **Secret** 输入框中：
+
+| Name 输入 | Secret 输入 | 是否必填 |
+|----------|-------------|---------|
+| `GLADOS_COOKIES` | GLaDOS/Railgun 的完整 Cookie；多账号用 `&` 分隔 | **必填** |
+| `PUSHDEER_SENDKEY` | [PushDeer](https://www.pushdeer.com) 推送密钥 | 可选 |
+| `GLADOS_EXCHANGE_PLAN` | `plan100` / `plan200` / `plan500`，默认 `plan500` | 可选 |
+| `GLADOS_VERBOSE` | 设为 `true` 开启详细日志，默认 `false` | 可选 |
+
+> 如果 GitHub 提示 `Secret names can only contain alphanumeric characters ...`，说明 Cookie 被误填到了 **Name**。请将 **Name** 改为 `GLADOS_COOKIES`，把 `koa:sess=...; koa:sess.sig=...` 形式的完整 Cookie 填入 **Secret**。
 
 ### 4. 启用 Actions
 
@@ -93,6 +97,7 @@ GitHub 会在仓库 **连续 60 天没有新提交** 后自动暂停所有定时
 2. 点击最近的 `GLaDOS/Railgun 自动签到` 运行记录
 3. 展开 **执行签到** 步骤查看详细日志
 4. 常见问题：
+   - **添加 Cookie 时提示 Secret name 格式错误**：Secret 的 **Name** 应填写 `GLADOS_COOKIES`，Cookie 应填写在 **Secret** 输入框中
    - **签到失败**：Cookie 可能已过期，重新获取并更新 `GLADOS_COOKIES`
    - **推送未收到**：检查 `PUSHDEER_SENDKEY` 是否正确配置
    - **兑换失败**：积分不足，可调整 `GLADOS_EXCHANGE_PLAN` 为更低档位
