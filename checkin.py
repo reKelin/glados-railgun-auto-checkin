@@ -1,5 +1,4 @@
 import requests
-import json
 import os
 import logging
 from enum import Enum
@@ -74,8 +73,8 @@ def log_method(func):
 
             DEFAULT_ERRORS = {
                 "checkin": {"status": "签到失败", "points": "0", "message": ""},
-                "get_status": ("None 天", -2),
-                "get_points": ("None 积分", 0),
+                "get_status": ("None 天", None),
+                "get_points": ("None 积分", None),
                 "exchange": "",
             }
 
@@ -238,7 +237,7 @@ class API:
 
         try:
             if method.upper() == "POST":
-                response = self.session.post(url, headers=session_headers, data=json.dumps(data), timeout=(60, 120))
+                response = self.session.post(url, headers=session_headers, json=data, timeout=(60, 120))
             elif method.upper() == "GET":
                 response = self.session.get(url, headers=session_headers, timeout=(60, 120))
             else:
@@ -291,6 +290,11 @@ class API:
                 result["message"] = message
             else:
                 self._log("info", LogEmoji.FAIL, f"{{ code : {code}, message : {message} }}", force=True)
+                if code == -2:
+                    hint = "Cookie 无效或已过期，请重新登录并将完整 Cookie 更新到 GLADOS_COOKIES。"
+                    if self.domain == "glados.cloud":
+                        hint += " GLaDOS Cookie 应包含 gld:sess 和 gld:sess.sig。"
+                    self._log("warning", LogEmoji.WARNING, hint, force=True)
                 result["code"] = CheckinStatus.FAILURE
                 result["status"] = "签到失败"
                 result["points"] = "0"
@@ -304,7 +308,7 @@ class API:
         return result
 
     @log_method
-    def get_status(self, cookies: str) -> Tuple[str, int]:
+    def get_status(self, cookies: str, quiet: bool = False) -> Tuple[str, Optional[int]]:
         """获取状态"""
 
         url = self._get_full_url(self.STATUS_URL)
@@ -312,22 +316,23 @@ class API:
 
         if response:
             data = response.json()
-            code = data.get("code", -2)
+            code = data.get("code")
             left_days = data.get("data", {}).get("leftDays", None)
 
-            if left_days is not None:
+            if code == 0 and left_days is not None:
                 left_days_int = int(float(left_days))
                 self._log("info", LogEmoji.SUCCESS, f"{{ code : {code}, leftDays : {left_days_int} 天}}")
                 return f"{left_days_int} 天", code
             else:
-                self._log("info", LogEmoji.FAIL, f"{{ code : {code}, leftDays : {left_days} 天}}", force=True)
+                if not quiet or code != -2:
+                    self._log("info", LogEmoji.FAIL, f"{{ code : {code}, leftDays : {left_days} 天}}", force=True)
                 return "None 天", code
         else:
             self._log("warning", LogEmoji.WARNING, "获取状态失败", force=True)
-            return "None 天", -2
+            return "None 天", None
 
     @log_method
-    def get_points(self, cookies: str) -> Tuple[str, int]:
+    def get_points(self, cookies: str) -> Tuple[str, Optional[int]]:
         """获取积分"""
         url = self._get_full_url(self.POINTS_URL)
         response = self._make_request(url, "GET", cookies=cookies)
@@ -337,7 +342,7 @@ class API:
             code = data.get("code", -2)
             points = data.get("points", None)
 
-            if points is not None:
+            if code == 0 and points is not None:
                 points_int = int(float(points))
                 self._log("info", LogEmoji.SUCCESS, f"{{ code : {code}, points : {points_int} 积分}}")
                 points_str = f"{points_int} 积分"
@@ -345,10 +350,10 @@ class API:
                 return points_str, points_num
             else:
                 self._log("info", LogEmoji.FAIL, f"{{ code : {code}, points : {points} 积分}}", force=True)
-                return "None 积分", 0
+                return "None 积分", None
         else:
             self._log("warning", LogEmoji.WARNING, "获取积分失败", force=True)
-            return "None 积分", 0
+            return "None 积分", None
 
     @log_method
     def exchange(self, cookies: str, plan: str, required_points: int) -> str:
@@ -428,20 +433,17 @@ class Checker:
     def checkin_all(self):
         """执行所有签到任务"""
         cookie_count = len(self.config.cookies_list)
-        domain_count = len(self.config.DOMAINS)
-        total_tasks = cookie_count * domain_count
-        task_idx = 0
 
-        logger.info(f"{LogEmoji.INFO} 共 {cookie_count} 个 Cookie, {domain_count} 个域名, 共 {total_tasks} 个任务")
+        logger.info(f"{LogEmoji.INFO} 共 {cookie_count} 个 Cookie，将先查询可访问的站点，再执行签到。")
 
         for cookie_idx, cookie in enumerate(self.config.cookies_list, 1):
             logger.info(f"{LogEmoji.START} ========== 开始处理 Cookie {cookie_idx} ==========")
+            results_before = len(self.results)
 
             for domain in self.config.DOMAINS:
-                task_idx += 1
-                logger.info(f"{LogEmoji.INFO} ----- 任务 {task_idx}/{total_tasks}: {LogEmoji.COOKIE}[{cookie_idx}] on {LogEmoji.DOMAIN}[{domain}] -----")
-
                 result = self._checkin_on_domain(cookie, cookie_idx, domain)
+                if result is None:
+                    continue
                 self.results.append(result)
 
                 result_message = f"结果: {result.status}"
@@ -452,28 +454,54 @@ class Checker:
                 else:
                     self._log(cookie_idx, domain, LogEmoji.WARNING, result_message, force=True)
 
-    def _checkin_on_domain(self, cookie: str, cookie_idx: int, domain: str) -> CheckinResult:
+            if len(self.results) == results_before:
+                logger.error(
+                    f"{LogEmoji.COOKIE}[{cookie_idx}] Cookie 在所有站点均无权限，请重新登录对应站点，"
+                    "复制完整 Cookie 并更新 GLADOS_COOKIES；GLaDOS Cookie 应包含 gld:sess 和 gld:sess.sig。"
+                )
+                self.results.append(CheckinResult(cookie_idx, "未匹配站点", status="Cookie 无效或已过期"))
+
+    def _checkin_on_domain(self, cookie: str, cookie_idx: int, domain: str) -> Optional[CheckinResult]:
         result = CheckinResult(cookie_idx, domain)
 
         with API(domain, cookie_idx, verbose=self.config.verbose) as api:
             # 1. 获取状态
             self._log(cookie_idx, domain, LogEmoji.STATUS, "查询剩余天数")
-            days_str, status_code = api.get_status(cookie)
+            days_str, status_code = api.get_status(cookie, quiet=True)
+            if status_code == -2:
+                self._log(cookie_idx, domain, LogEmoji.INFO, "Cookie 无权访问此站点，跳过。", force=True)
+                return None
             result.days = days_str
+            if status_code != 0:
+                result.status = "状态查询失败，未执行签到"
+                return result
+
+            self._log(cookie_idx, domain, LogEmoji.START, "Cookie 验证通过，开始签到。", force=True)
 
             # 2. 签到
             self._log(cookie_idx, domain, LogEmoji.CHECKIN, "执行签到")
             checkin_result = api.checkin(cookie)
             result.status = checkin_result["status"]
             result.code = checkin_result.get("code", CheckinStatus.FAILURE)
+            result.points = checkin_result["points"]
+            if result.code == CheckinStatus.FAILURE:
+                return result
 
             # 3. 获取积分
             self._log(cookie_idx, domain, LogEmoji.POINTS, "查询总积分")
             points_str, points_num = api.get_points(cookie)
             result.points_total = points_str
+            if points_num is None:
+                result.exchange = "积分查询失败，未兑换"
+                self._log(cookie_idx, domain, LogEmoji.WARNING, result.exchange, force=True)
+                return result
 
             # 4. 执行兑换
             required_points = self.config.EXCHANGE_PLANS.get(self.config.exchange_plan, 500)
+            if points_num < required_points:
+                result.exchange = f"积分不足，跳过兑换（{points_num}/{required_points}）"
+                self._log(cookie_idx, domain, LogEmoji.INFO, result.exchange, force=True)
+                return result
             self._log(
                 cookie_idx,
                 domain,
@@ -500,14 +528,15 @@ class Checker:
 
         send_content_lines = []
         log_content_lines = []
-        for i, res in enumerate(results, 1):
-            line = f"#{i} P:{res['points']} 剩余:{res['days']} 总积分:{res['points_total']} | {res['status']} | {res['exchange']}"
+        for res in results:
+            label = f"Cookie {res['cookie_index']} @ {res['domain']}"
+            line = f"{label}: P:{res['points']} 剩余:{res['days']} 总积分:{res['points_total']} | {res['status']} | {res['exchange']}"
             send_content_lines.append(line)
 
             if self.config.verbose:
                 log_line = line
             else:
-                log_line = f"#{i} {res['status']}"
+                log_line = f"{label}: {res['status']}"
             log_content_lines.append(log_line)
 
         content = "\n".join(send_content_lines)

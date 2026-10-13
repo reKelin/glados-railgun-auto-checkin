@@ -40,6 +40,7 @@ jobs:
           GLADOS_VERBOSE: ${{ secrets.GLADOS_VERBOSE }}
 
       - name: 清理旧工作流记录
+        if: github.ref == 'refs/heads/main'
         uses: actions/github-script@v7
         with:
           script: |

@@ -5,7 +5,7 @@
 ## 功能特点
 
 - 自动签到 [GLaDOS](https://glados.cloud) 和 [Railgun](https://railgun.info) 双平台
-- 多账号支持（Cookie 之间用 `&` 分隔）
+- 多账号支持（Cookie 之间用 `&` 分隔），自动查询每份 Cookie 可访问的站点并签到
 - 自动兑换积分（支持 plan100 / plan200 / plan500 三种策略）
 - PushDeer 手机推送通知（可选）
 - **仓库保活**：每月自动产生一次虚拟提交，确保仓库长期活跃
@@ -20,14 +20,16 @@
 
 ### 2. 获取 Cookie
 
-1. 用浏览器登录 [GLaDOS](https://glados.space) 或 [Railgun](https://railgun.info)
+1. 用浏览器登录 [GLaDOS](https://glados.cloud) 或 [Railgun](https://railgun.info)；使用两个站点时，分别获取各自的 Cookie
 2. 按 `F12` 打开开发者工具，切换到 **Network（网络）** 标签
-3. 刷新页面，点击第一个请求
+3. 刷新页面，选择发往该站点的 `/api/user/status` 等 API 请求
 4. 在 **Request Headers** 中找到 `Cookie` 字段，复制完整值
 
-> 参考格式：`koa:sess=eyJ1c2...; koa:sess.sig=xJkO...`
+> GLaDOS 参考格式：`koa:sess=...; koa:sess.sig=...; gld:sess=...; gld:sess.sig=...`。需要包含 `gld:` 开头的两段，请复制请求中的完整值；Railgun 同样复制其实际请求中的完整 Cookie。
 
 多账号时将多个 Cookie 用 `&` 连接即可（例如：`cookie1&cookie2&cookie3`）。
+
+脚本先查询每份 Cookie 在两个站点的登录状态，只在验证通过的站点执行签到、查询积分及兑换。无权限的交叉组合会跳过，不计为签到失败；一份 Cookie 在两个站点均无权限时，会报告 Cookie 无效或已过期。
 
 ### 3. 添加 Secrets
 
@@ -42,7 +44,7 @@
 | `GLADOS_EXCHANGE_PLAN` | `plan100` / `plan200` / `plan500`，默认 `plan500` | 可选 |
 | `GLADOS_VERBOSE` | 设为 `true` 开启详细日志，默认 `false` | 可选 |
 
-> 如果 GitHub 提示 `Secret names can only contain alphanumeric characters ...`，说明 Cookie 被误填到了 **Name**。请将 **Name** 改为 `GLADOS_COOKIES`，把 `koa:sess=...; koa:sess.sig=...` 形式的完整 Cookie 填入 **Secret**。
+> 如果 GitHub 提示 `Secret names can only contain alphanumeric characters ...`，说明 Cookie 被误填到了 **Name**。请将 **Name** 改为 `GLADOS_COOKIES`，把浏览器请求中复制的完整 Cookie 填入 **Secret**。
 
 ### 4. 启用 Actions
 
@@ -69,6 +71,8 @@
 
 不配置 `GLADOS_EXCHANGE_PLAN` 时默认使用 `plan500`。
 
+总积分达到所选计划的要求时才发起兑换，积分不足时跳过。
+
 ## 仓库保活机制
 
 GitHub 会在仓库 **连续 60 天没有新提交** 后自动暂停所有定时工作流。本项目的 `keepalive.yml` 每月 15 日自动向仓库推送一次保活提交（更新 `.keepalive` 时间戳文件），确保仓库始终保持活跃状态。
@@ -86,6 +90,7 @@ GitHub 会在仓库 **连续 60 天没有新提交** 后自动暂停所有定时
 │       └── keepalive.yml        # 每月保活工作流
 ├── checkin.py                   # 签到脚本
 ├── logging_config.py            # 日志配置（北京时间）
+├── test_checkin.py               # 签到与兑换回归检查
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -98,9 +103,12 @@ GitHub 会在仓库 **连续 60 天没有新提交** 后自动暂停所有定时
 3. 展开 **执行签到** 步骤查看详细日志
 4. 常见问题：
    - **添加 Cookie 时提示 Secret name 格式错误**：Secret 的 **Name** 应填写 `GLADOS_COOKIES`，Cookie 应填写在 **Secret** 输入框中
-   - **签到失败**：Cookie 可能已过期，重新获取并更新 `GLADOS_COOKIES`
+   - **没有权限 / No permission**：重新登录对应站点并更新 `GLADOS_COOKIES` 中的完整 Cookie；GLaDOS Cookie 需要包含 `gld:sess` 和 `gld:sess.sig`
+   - **Cookie 无权访问此站点，跳过**：该 Cookie 不适用于这个站点，脚本会继续检查另一站点；只要另一站点验证通过即可正常签到
+   - **状态查询失败，未执行签到**：站点响应异常或网络请求失败，查看前面的错误日志并稍后重试
+   - **签到失败**：查看该站点返回的错误信息；Cookie 过期时重新获取并更新 `GLADOS_COOKIES`
    - **推送未收到**：检查 `PUSHDEER_SENDKEY` 是否正确配置
-   - **兑换失败**：积分不足，可调整 `GLADOS_EXCHANGE_PLAN` 为更低档位
+   - **兑换失败**：查看站点返回的错误信息；积分不足时会直接跳过兑换，可调整 `GLADOS_EXCHANGE_PLAN` 为更低档位
 
 ## 免责声明
 
